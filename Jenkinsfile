@@ -1,6 +1,15 @@
 pipeline {
     agent any
 
+    // 🔹 Choose what this run should do
+    parameters {
+        choice(
+            name: 'TF_ACTION',
+            choices: ['apply', 'destroy'],
+            description: 'Choose whether to apply Terraform changes or destroy the VPC.'
+        )
+    }
+
     environment {
         AWS_DEFAULT_REGION = 'us-east-1'
         TF_IN_AUTOMATION   = 'true'
@@ -18,7 +27,6 @@ pipeline {
             }
         }
 
-        
         stage('Terraform Init') {
             steps {
                 sh '''
@@ -29,6 +37,9 @@ pipeline {
         }
 
         stage('Terraform Plan') {
+            when {
+                expression { params.TF_ACTION == 'apply' }
+            }
             steps {
                 sh '''
                   cd terraform
@@ -39,17 +50,34 @@ pipeline {
 
         stage('Terraform Apply') {
             when {
-                branch 'main'   // only auto-apply on main branch
+                expression { params.TF_ACTION == 'apply' }
             }
             steps {
-                // Optional manual approval before apply
                 script {
+                    // Manual confirmation before applying
                     input message: 'Apply Terraform changes to AWS VPC?'
                 }
 
                 sh '''
                   cd terraform
-                  terraform apply -input=false -auto-approve tfplan   #Apply exactly this plan file, don’t recalculate.
+                  terraform apply -input=false -auto-approve tfplan   # Apply exactly this plan file, don’t recalculate.
+                '''
+            }
+        }
+
+        stage('Terraform Destroy') {
+            when {
+                expression { params.TF_ACTION == 'destroy' }
+            }
+            steps {
+                script {
+                    // Manual confirmation before destroying
+                    input message: '⚠️ Destroy ALL Terraform-managed resources (VPC, etc.)?'
+                }
+
+                sh '''
+                  cd terraform
+                  terraform destroy -input=false -auto-approve   # Destroy using current remote state.
                 '''
             }
         }
@@ -57,11 +85,11 @@ pipeline {
 
     post {
         always {
-            echo "Pipeline finished."
+            echo "Pipeline finished. Action selected: ${params.TF_ACTION}"
 
-            // Archive Terraform logs / plan if you want
+            // Archive Terraform files for traceability
             archiveArtifacts artifacts: 'terraform/**', fingerprint: true
-            // Save all Terraform files from this build into Jenkins, and track them so I know which build they came from.
         }
     }
 }
+
